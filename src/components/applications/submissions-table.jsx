@@ -58,81 +58,70 @@ export default function SubmissionsTable({ applicationId }) {
   const canAdvance = hasPermission(PERMISSIONS.EVALUATION_ADVANCE);
   const canAdmit = hasPermission(PERMISSIONS.EVALUATION_ADMIT);
 
+  // Load static data once on mount
   useEffect(() => {
-    loadData();
-  }, [applicationId, currentPage, filter]);
+    const loadStaticData = async () => {
+      try {
+        const [fieldsRes, configRes, evalRes, cutoffRes] = await Promise.all([
+          fetch(`/api/applications/${applicationId}/fields`),
+          fetch(`/api/applications/${applicationId}/table-config`),
+          fetch(`/api/applications/${applicationId}/evaluation/steps`),
+          fetch(`/api/applications/${applicationId}/evaluation/cutoff`),
+        ]);
+        const [fieldsData, configData, evalData, cutoffData] = await Promise.all([
+          fieldsRes.json(), configRes.json(), evalRes.json(), cutoffRes.json()
+        ]);
+        if (fieldsRes.ok) setFormFields(fieldsData.data || []);
+        if (configRes.ok && configData.data?.pinnedFields) setPinnedFields(configData.data.pinnedFields);
+        if (evalRes.ok && evalData.data) setEvaluationData(evalData.data);
+        if (cutoffRes.ok && cutoffData.data?.cutoffScores) {
+          const cutoff = typeof cutoffData.data.cutoffScores === 'string'
+            ? JSON.parse(cutoffData.data.cutoffScores) : cutoffData.data.cutoffScores;
+          setCutoffScores(cutoff);
+          if (cutoffData.data?.evaluationSettings) {
+            const settings = typeof cutoffData.data.evaluationSettings === 'string'
+              ? JSON.parse(cutoffData.data.evaluationSettings) : cutoffData.data.evaluationSettings;
+            setEvalSettings(settings);
+          }
+        }
+      } catch (error) {
+        console.error('Error loading static data:', error);
+      }
+    };
+    loadStaticData();
+  }, [applicationId]);
 
   // Reset to page 1 when filter changes
   useEffect(() => {
     setCurrentPage(1);
   }, [filter]);
 
+  // Load submissions when page or filter changes
+  useEffect(() => {
+    loadData();
+  }, [applicationId, currentPage, filter]);
+
   const loadData = async () => {
     setIsLoading(true);
     try {
-      // Build query params for server-side pagination and filtering
       const queryParams = new URLSearchParams({
         page: currentPage.toString(),
         limit: itemsPerPage.toString()
       });
-
-      // Add step filter if not 'all'
       if (filter !== 'all') {
-        const stepNumber = filter === 'step1' ? '1' : '2';
-        queryParams.set('currentStep', stepNumber);
+        queryParams.set('currentStep', filter === 'step1' ? '1' : '2');
       }
-
       const subRes = await fetch(`/api/applications/${applicationId}/submissions?${queryParams}`);
       const subData = await subRes.json();
       if (subRes.ok) {
         setSubmissions(subData.data?.submissions || []);
-        // Update pagination state from server response
         if (subData.data?.pagination) {
           setTotalPages(subData.data.pagination.totalPages || 1);
           setTotalSubmissions(subData.data.pagination.total || 0);
         }
       }
-
-      // Load form fields
-      const fieldsRes = await fetch(`/api/applications/${applicationId}/fields`);
-      const fieldsData = await fieldsRes.json();
-      if (fieldsRes.ok) {
-        setFormFields(fieldsData.data || []);
-      }
-
-      // Load table config
-      const configRes = await fetch(`/api/applications/${applicationId}/table-config`);
-      const configData = await configRes.json();
-      if (configRes.ok && configData.data?.pinnedFields) {
-        setPinnedFields(configData.data.pinnedFields);
-      }
-
-      // Load evaluation data
-      const evalRes = await fetch(`/api/applications/${applicationId}/evaluation/steps`);
-      const evalData = await evalRes.json();
-      if (evalRes.ok && evalData.data) {
-        setEvaluationData(evalData.data);
-      }
-
-      // Load cutoff scores
-      const cutoffRes = await fetch(`/api/applications/${applicationId}/evaluation/cutoff`);
-      const cutoffData = await cutoffRes.json();
-      if (cutoffRes.ok && cutoffData.data?.cutoffScores) {
-        const cutoff = typeof cutoffData.data.cutoffScores === 'string'
-          ? JSON.parse(cutoffData.data.cutoffScores)
-          : cutoffData.data.cutoffScores;
-        setCutoffScores(cutoff);
-
-        // Also load evaluation settings
-        if (cutoffData.data?.evaluationSettings) {
-          const settings = typeof cutoffData.data.evaluationSettings === 'string'
-            ? JSON.parse(cutoffData.data.evaluationSettings)
-            : cutoffData.data.evaluationSettings;
-          setEvalSettings(settings);
-        }
-      }
     } catch (error) {
-      console.error('Error loading data:', error);
+      console.error('Error loading submissions:', error);
       toast.error('Failed to load submissions');
     } finally {
       setIsLoading(false);
@@ -357,8 +346,8 @@ export default function SubmissionsTable({ applicationId }) {
 
   const filteredSubmissions = (() => {
     const list = getFilteredSubmissions();
-    if (sortOrder === 'score_desc') return [...list].sort((a, b) => (b.averageScore ?? -1) - (a.averageScore ?? -1));
-    if (sortOrder === 'score_asc') return [...list].sort((a, b) => (a.averageScore ?? -1) - (b.averageScore ?? -1));
+    if (sortOrder === 'score_desc') return [...list].sort((a, b) => (b.evaluationProgress?.averageScore ?? -1) - (a.evaluationProgress?.averageScore ?? -1));
+    if (sortOrder === 'score_asc') return [...list].sort((a, b) => (a.evaluationProgress?.averageScore ?? -1) - (b.evaluationProgress?.averageScore ?? -1));
     return list;
   })();
 

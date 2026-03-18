@@ -47,20 +47,22 @@ export async function GET(request, { params }) {
     // Get total count for pagination
     const totalCount = await applicationService.getSubmissionCount(applicationId, { status, search, currentStep })
 
-    // Get evaluation data for enriching submissions
-    const evaluationSteps = await prisma.evaluationStep.findMany({
-      where: { applicationId },
-      select: { id: true, stepNumber: true }
-    })
-
-    // Get cutoff scores and evaluation settings
-    const app = await prisma.application.findUnique({
-      where: { id: applicationId },
-      select: {
-        cutoffScores: true,
-        evaluationSettings: true
-      }
-    })
+    // Batch fetch all static data in parallel
+    const [evaluationSteps, app, uniqueJudges] = await Promise.all([
+      prisma.evaluationStep.findMany({
+        where: { applicationId },
+        select: { id: true, stepNumber: true }
+      }),
+      prisma.application.findUnique({
+        where: { id: applicationId },
+        select: { cutoffScores: true, evaluationSettings: true }
+      }),
+      prisma.applicationScore.findMany({
+        where: { submission: { applicationId } },
+        select: { judgeId: true },
+        distinct: ['judgeId']
+      })
+    ])
 
     const cutoffScores = app?.cutoffScores
       ? (typeof app.cutoffScores === 'string' ? JSON.parse(app.cutoffScores) : app.cutoffScores)
@@ -70,53 +72,70 @@ export async function GET(request, { params }) {
       ? (typeof app.evaluationSettings === 'string' ? JSON.parse(app.evaluationSettings) : app.evaluationSettings)
       : { minScore: 1, maxScore: 10, requiredEvaluatorPercentage: 75 }
 
-    // Count total evaluators (users with evaluation.score permission)
-    // For simplicity, we'll get this from the number of unique judges who have scored any submission
-    const uniqueJudges = await prisma.applicationScore.findMany({
-      where: {
-        submission: { applicationId }
-      },
-      select: { judgeId: true },
-      distinct: ['judgeId']
-    })
-    const totalJudges = uniqueJudges.length || 1 // Default to 1 to avoid division by zero
+    const totalJudges = uniqueJudges.length || 1
 
-    // Enrich submissions with evaluation data
-    const enrichedSubmissions = await Promise.all(
-      submissions.map(async (submission) => {
-        const currentStep = submission.currentStep || 1
-        const step = evaluationSteps.find(s => s.stepNumber === currentStep)
+    // Batch fetch all scores for all submissions in ONE query (eliminates N+1)
+    const submissionIds = submissions.map(s => s.id)
+    const stepIds = evaluationSteps.map(s => s.id)
 
-        if (!step) {
-          return { ...submission, evaluationProgress: null }
-        }
+    const allScores = stepIds.length > 0 && submissionIds.length > 0
+      ? await prisma.applicationScore.findMany({
+          where: { submissionId: { in: submissionIds }, stepId: { in: stepIds } },
+          select: { submissionId: true, stepId: true, totalScore: true }
+        })
+      : []
 
-        // Get aggregate score for this submission at current step
-        const cutoff = currentStep === 1 ? cutoffScores.step1 : cutoffScores.step2
-        const aggregateData = await EvaluationService.getAggregateScore(
-          submission.id,
-          step.id,
-          totalJudges,
-          cutoff,
-          evalSettings.requiredEvaluatorPercentage
-        )
+    // Group scores by submissionId+stepId for O(1) lookup
+    const scoreMap = {}
+    for (const score of allScores) {
+      const key = `${score.submissionId}:${score.stepId}`
+      if (!scoreMap[key]) scoreMap[key] = []
+      scoreMap[key].push(score.totalScore)
+    }
 
+    // Compute aggregate in memory — no more per-submission DB calls
+    const enrichedSubmissions = submissions.map((submission) => {
+      const stepNum = submission.currentStep || 1
+      const step = evaluationSteps.find(s => s.stepNumber === stepNum)
+
+      if (!step) return { ...submission, evaluationProgress: null }
+
+      const cutoff = stepNum === 1 ? cutoffScores.step1 : cutoffScores.step2
+      const scores = scoreMap[`${submission.id}:${step.id}`] || []
+      const evaluatorCount = scores.length
+
+      if (evaluatorCount === 0) {
         return {
           ...submission,
           evaluationProgress: {
-            averageScore: aggregateData.averageScore,
-            scored: aggregateData.evaluatorCount,
-            total: aggregateData.totalJudges,
-            evaluatorPercentage: aggregateData.evaluatorPercentage,
-            passed: aggregateData.passed,
-            meetsCutoff: aggregateData.meetsCutoff,
-            meetsEvaluatorRequirement: aggregateData.meetsEvaluatorRequirement,
-            status: aggregateData.status,
-            cutoffScore: aggregateData.cutoffScore
+            averageScore: null, scored: 0, total: totalJudges,
+            evaluatorPercentage: 0, passed: false, meetsCutoff: false,
+            meetsEvaluatorRequirement: false, status: 'PENDING', cutoffScore: cutoff
           }
         }
-      })
-    )
+      }
+
+      const average = scores.reduce((s, v) => s + v, 0) / evaluatorCount
+      const evaluatorPercentage = (evaluatorCount / totalJudges) * 100
+      const meetsEvaluatorRequirement = evaluatorPercentage >= (evalSettings.requiredEvaluatorPercentage || 75)
+      const meetsCutoff = cutoff > 0 ? average >= cutoff : true
+      const passed = meetsCutoff && meetsEvaluatorRequirement
+
+      return {
+        ...submission,
+        evaluationProgress: {
+          averageScore: meetsEvaluatorRequirement ? average : null,
+          scored: evaluatorCount,
+          total: totalJudges,
+          evaluatorPercentage,
+          passed,
+          meetsCutoff,
+          meetsEvaluatorRequirement,
+          status: meetsEvaluatorRequirement ? (meetsCutoff ? 'PASSED' : 'FAILED') : 'PENDING',
+          cutoffScore: cutoff
+        }
+      }
+    })
 
     timer.log('GET', `/api/applications/${applicationId}/submissions`, 200)
 

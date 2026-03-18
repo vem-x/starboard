@@ -9,7 +9,6 @@ import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { AlertCircle, CheckCircle, Settings, Users, Calendar } from 'lucide-react';
 import StepSetup from './step-setup';
-import ImprovedAdminScoreboard from './admin-scoreboard-improved';
 import InterviewSlots from './interview-slots';
 
 export default function EvaluationDashboard({ applicationId }) {
@@ -180,40 +179,30 @@ export default function EvaluationDashboard({ applicationId }) {
         {/* Step 1 Content */}
         <TabsContent value="step1" className="space-y-4">
           {step1 && (
-            <>
-              <Card className="starboard-card">
-                <CardHeader>
-                  <CardTitle>Evaluation Criteria</CardTitle>
-                  <CardDescription>Scoring criteria for {step1.name}</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-2">
-                    {step1.criteria?.map((criterion, index) => (
-                      <div
-                        key={criterion.id}
-                        className="flex items-center justify-between p-3 bg-slate-50 rounded-lg"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="flex items-center justify-center w-8 h-8 rounded-full bg-purple-100 text-purple-700 font-semibold text-sm">
-                            {index + 1}
-                          </div>
-                          <span className="font-medium">{criterion.name}</span>
+            <Card className="starboard-card">
+              <CardHeader>
+                <CardTitle>Evaluation Criteria</CardTitle>
+                <CardDescription>Scoring criteria for {step1.name}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {step1.criteria?.map((criterion, index) => (
+                    <div
+                      key={criterion.id}
+                      className="flex items-center justify-between p-3 bg-slate-50 rounded-lg"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center justify-center w-8 h-8 rounded-full bg-purple-100 text-purple-700 font-semibold text-sm">
+                          {index + 1}
                         </div>
-                        <Badge variant="outline">Weight: {criterion.weight}x</Badge>
+                        <span className="font-medium">{criterion.name}</span>
                       </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-
-              <ImprovedAdminScoreboard
-                applicationId={applicationId}
-                stepId={step1.id}
-                stepNumber={step1.stepNumber}
-                stepName={step1.name}
-                onAction={loadSteps}
-              />
-            </>
+                      <Badge variant="outline">Weight: {criterion.weight}x</Badge>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
           )}
         </TabsContent>
 
@@ -245,27 +234,7 @@ export default function EvaluationDashboard({ applicationId }) {
                   </div>
                 </CardContent>
               </Card>
-
-              <Tabs defaultValue="scoreboard">
-                <TabsList>
-                  <TabsTrigger value="scoreboard">Scoreboard</TabsTrigger>
-                  <TabsTrigger value="slots">Interview Slots</TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="scoreboard">
-                  <ImprovedAdminScoreboard
-                    applicationId={applicationId}
-                    stepId={step2.id}
-                    stepNumber={step2.stepNumber}
-                    stepName={step2.name}
-                    onAction={loadSteps}
-                  />
-                </TabsContent>
-
-                <TabsContent value="slots">
-                  <InterviewSlots applicationId={applicationId} stepId={step2.id} />
-                </TabsContent>
-              </Tabs>
+              <InterviewSlots applicationId={applicationId} stepId={step2.id} />
             </>
           )}
         </TabsContent>
