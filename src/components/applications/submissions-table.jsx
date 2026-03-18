@@ -40,6 +40,7 @@ export default function SubmissionsTable({ applicationId }) {
   const [pinnedFields, setPinnedFields] = useState([]);
   const [selectedIds, setSelectedIds] = useState([]);
   const [filter, setFilter] = useState('step1'); // 'all', 'step1', 'step2'
+  const [sortOrder, setSortOrder] = useState('date'); // 'date' | 'score_desc' | 'score_asc'
   const [isLoading, setIsLoading] = useState(true);
   const [isActing, setIsActing] = useState(false);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
@@ -354,7 +355,12 @@ export default function SubmissionsTable({ applicationId }) {
     .map(id => formFields.find(f => f.id === id))
     .filter(Boolean);
 
-  const filteredSubmissions = getFilteredSubmissions();
+  const filteredSubmissions = (() => {
+    const list = getFilteredSubmissions();
+    if (sortOrder === 'score_desc') return [...list].sort((a, b) => (b.averageScore ?? -1) - (a.averageScore ?? -1));
+    if (sortOrder === 'score_asc') return [...list].sort((a, b) => (a.averageScore ?? -1) - (b.averageScore ?? -1));
+    return list;
+  })();
 
   if (isLoading) {
     return <div className="text-center py-8">Loading submissions...</div>;
@@ -397,6 +403,16 @@ export default function SubmissionsTable({ applicationId }) {
                 <SelectItem value="step1">Step 1: Initial Review</SelectItem>
                 <SelectItem value="step2">Step 2: Interview</SelectItem>
                 <SelectItem value="all">All Steps</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={sortOrder} onValueChange={setSortOrder}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Sort by" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="date">Sort: Submission Date</SelectItem>
+                <SelectItem value="score_desc">Sort: Highest Score</SelectItem>
+                <SelectItem value="score_asc">Sort: Lowest Score</SelectItem>
               </SelectContent>
             </Select>
           </div>
