@@ -6,7 +6,7 @@ import { Card } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
-import { ChevronDown, ChevronUp, Eye, Users, AlertCircle } from 'lucide-react';
+import { ChevronDown, ChevronUp, Eye, Users, AlertCircle, ArrowUpDown } from 'lucide-react';
 
 export default function ImprovedAdminScoreboard({ applicationId, stepId, stepNumber, stepName, onAction }) {
   const [scoreboard, setScoreboard] = useState([]);
@@ -14,6 +14,7 @@ export default function ImprovedAdminScoreboard({ applicationId, stepId, stepNum
   const [expandedRows, setExpandedRows] = useState(new Set());
   const [isLoading, setIsLoading] = useState(false);
   const [isActing, setIsActing] = useState(false);
+  const [sortOrder, setSortOrder] = useState('date'); // 'date' | 'score_desc' | 'score_asc'
 
   useEffect(() => {
     loadScoreboard();
@@ -31,7 +32,7 @@ export default function ImprovedAdminScoreboard({ applicationId, stepId, stepNum
         throw new Error(data.error?.message || 'Failed to load scoreboard');
       }
 
-      setScoreboard(data.data);
+      setScoreboard(data.data || []);
     } catch (error) {
       console.error('Error loading scoreboard:', error);
       toast.error(error.message);
@@ -139,34 +140,30 @@ export default function ImprovedAdminScoreboard({ applicationId, stepId, stepNum
   const validSubmissions = scoreboard.filter(s => s.isValid !== false).length;
   const invalidSubmissions = scoreboard.filter(s => s.isValid === false).length;
 
+  const sortedScoreboard = [...scoreboard].sort((a, b) => {
+    if (sortOrder === 'score_desc') return (b.averageScore ?? -1) - (a.averageScore ?? -1);
+    if (sortOrder === 'score_asc') return (a.averageScore ?? -1) - (b.averageScore ?? -1);
+    return 0; // 'date' — preserve server order (submittedAt asc)
+  });
+
   return (
     <div className="space-y-4">
-      {/* Header with Stats */}
-      <Card className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div>
-            <p className="text-sm text-gray-600">Total Submissions</p>
-            <p className="text-2xl font-bold">{scoreboard.length}</p>
-          </div>
-          <div>
-            <p className="text-sm text-gray-600">Valid Scores</p>
-            <p className="text-2xl font-bold text-green-600">{validSubmissions}</p>
-          </div>
-          <div>
-            <p className="text-sm text-gray-600">Invalid Scores (Need More Evaluators)</p>
-            <p className="text-2xl font-bold text-red-600">{invalidSubmissions}</p>
-          </div>
-          <div>
-            <p className="text-sm text-gray-600">Selected</p>
-            <p className="text-2xl font-bold text-blue-600">{selectedIds.length}</p>
-          </div>
-        </div>
-      </Card>
-
-      {/* Info */}
+      {/* Info + Sort Filter */}
       <div className="flex justify-between items-center">
         <div className="text-sm text-gray-600">
           {stepName} {selectedIds.length > 0 && `• ${selectedIds.length} selected`}
+        </div>
+        <div className="flex items-center gap-2">
+          <ArrowUpDown className="h-4 w-4 text-gray-400" />
+          <select
+            value={sortOrder}
+            onChange={(e) => setSortOrder(e.target.value)}
+            className="text-sm border rounded px-2 py-1 bg-white"
+          >
+            <option value="date">Sort: Submission Date</option>
+            <option value="score_desc">Sort: Highest Score</option>
+            <option value="score_asc">Sort: Lowest Score</option>
+          </select>
         </div>
       </div>
 
@@ -199,7 +196,7 @@ export default function ImprovedAdminScoreboard({ applicationId, stepId, stepNum
                   </td>
                 </tr>
               ) : (
-                scoreboard.map((submission) => (
+                sortedScoreboard.map((submission) => (
                   <>
                     {/* Main Row */}
                     <tr key={submission.submissionId} className="border-b hover:bg-gray-50">

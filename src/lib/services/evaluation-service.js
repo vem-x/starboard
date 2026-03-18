@@ -230,30 +230,15 @@ export class EvaluationService {
    * @returns {Promise<Array>} Submissions with scores
    */
   static async getStepScoreboard(stepId, options = {}) {
+    // Single query for step + app settings (no double-fetch)
     const step = await prisma.evaluationStep.findUnique({
       where: { id: stepId },
       include: {
         application: {
-          include: {
-            submissions: {
-              where: {
-                currentStep: { gte: 1 } // Only scored submissions
-              },
-              include: {
-                scores: {
-                  where: { stepId },
-                  include: {
-                    judge: {
-                      select: {
-                        id: true,
-                        firstName: true,
-                        lastName: true
-                      }
-                    }
-                  }
-                }
-              }
-            }
+          select: {
+            id: true,
+            cutoffScores: true,
+            evaluationSettings: true
           }
         },
         criteria: true
@@ -264,41 +249,44 @@ export class EvaluationService {
       throw new Error('Evaluation step not found');
     }
 
-    // Get cutoff scores and evaluation settings
-    const app = await prisma.application.findUnique({
-      where: { id: step.applicationId },
-      select: {
-        cutoffScores: true,
-        evaluationSettings: true
-      }
-    });
-
-    const cutoffScores = app?.cutoffScores
-      ? (typeof app.cutoffScores === 'string' ? JSON.parse(app.cutoffScores) : app.cutoffScores)
+    const cutoffScores = step.application?.cutoffScores
+      ? (typeof step.application.cutoffScores === 'string' ? JSON.parse(step.application.cutoffScores) : step.application.cutoffScores)
       : { step1: 0, step2: 0 };
 
-    const evalSettings = app?.evaluationSettings
-      ? (typeof app.evaluationSettings === 'string' ? JSON.parse(app.evaluationSettings) : app.evaluationSettings)
+    const evalSettings = step.application?.evaluationSettings
+      ? (typeof step.application.evaluationSettings === 'string' ? JSON.parse(step.application.evaluationSettings) : step.application.evaluationSettings)
       : { minScore: 1, maxScore: 10, requiredEvaluatorPercentage: 75 };
 
-    // Get the cutoff for this step
     const cutoff = step.stepNumber === 1 ? cutoffScores.step1 : cutoffScores.step2;
 
-    // TODO: Get total assigned evaluators count (for now, use evaluators who have scored at least 1 submission)
-    const allJudges = await prisma.applicationScore.findMany({
-      where: { stepId },
-      select: { judgeId: true },
-      distinct: ['judgeId']
-    });
+    // Run submissions + judges queries in parallel
+    const [submissions, allJudges] = await Promise.all([
+      prisma.applicationSubmission.findMany({
+        where: {
+          applicationId: step.applicationId,
+          currentStep: { gte: 1 },
+          ...(options.submissionId ? { id: options.submissionId } : {})
+        },
+        include: {
+          scores: {
+            where: { stepId },
+            include: {
+              judge: {
+                select: { id: true, firstName: true, lastName: true }
+              }
+            }
+          }
+        },
+        orderBy: { submittedAt: 'asc' }
+      }),
+      prisma.applicationScore.findMany({
+        where: { stepId },
+        select: { judgeId: true },
+        distinct: ['judgeId']
+      })
+    ]);
+
     const totalJudges = allJudges.length;
-
-    // Calculate aggregate scores for each submission
-    let submissions = step.application.submissions;
-
-    // Filter by submissionId if provided
-    if (options.submissionId) {
-      submissions = submissions.filter(s => s.id === options.submissionId);
-    }
 
     const scoreboard = submissions.map((submission) => {
       const scores = submission.scores;
@@ -373,9 +361,6 @@ export class EvaluationService {
         }))
       };
     });
-
-    // Sort by average score (descending)
-    scoreboard.sort((a, b) => (b.averageScore || 0) - (a.averageScore || 0));
 
     return scoreboard;
   }
