@@ -27,20 +27,21 @@ import {
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import SubmissionsTableConfig from './submissions-table-config';
 import { usePermissions } from '@/lib/hooks/usePermissions';
 import { PERMISSIONS } from '@/lib/utils/permissions';
 
 export default function SubmissionsTable({ applicationId }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { hasPermission } = usePermissions();
   const [submissions, setSubmissions] = useState([]);
   const [formFields, setFormFields] = useState([]);
   const [pinnedFields, setPinnedFields] = useState([]);
   const [selectedIds, setSelectedIds] = useState([]);
-  const [filter, setFilter] = useState('step1'); // 'all', 'step1', 'step2'
-  const [sortOrder, setSortOrder] = useState('date'); // 'date' | 'score_desc' | 'score_asc'
+  const [filter, setFilter] = useState(() => searchParams.get('step') || 'step1');
+  const [sortOrder, setSortOrder] = useState(() => searchParams.get('sort') || 'date');
   const [isLoading, setIsLoading] = useState(true);
   const [isActing, setIsActing] = useState(false);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
@@ -49,7 +50,7 @@ export default function SubmissionsTable({ applicationId }) {
   const [evalSettings, setEvalSettings] = useState({ requiredEvaluatorPercentage: 75, minScore: 1, maxScore: 10 });
 
   // Pagination state
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPage, setCurrentPage] = useState(() => parseInt(searchParams.get('page') || '1', 10));
   const [totalPages, setTotalPages] = useState(1);
   const [totalSubmissions, setTotalSubmissions] = useState(0);
   const [itemsPerPage] = useState(50);
@@ -91,22 +92,32 @@ export default function SubmissionsTable({ applicationId }) {
     loadStaticData();
   }, [applicationId]);
 
-  // Reset to page 1 when filter changes
+  // Reset to page 1 when filter or sort changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [filter]);
+  }, [filter, sortOrder]);
 
-  // Load submissions when page or filter changes
+  // Sync page, filter, sort to URL
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('page', currentPage.toString());
+    params.set('step', filter);
+    params.set('sort', sortOrder);
+    router.replace(`?${params.toString()}`, { scroll: false });
+  }, [currentPage, filter, sortOrder]);
+
+  // Load submissions when page, filter, or sort changes
   useEffect(() => {
     loadData();
-  }, [applicationId, currentPage, filter]);
+  }, [applicationId, currentPage, filter, sortOrder]);
 
   const loadData = async () => {
     setIsLoading(true);
     try {
       const queryParams = new URLSearchParams({
         page: currentPage.toString(),
-        limit: itemsPerPage.toString()
+        limit: itemsPerPage.toString(),
+        sort: sortOrder,
       });
       if (filter !== 'all') {
         queryParams.set('currentStep', filter === 'step1' ? '1' : '2');
@@ -344,12 +355,7 @@ export default function SubmissionsTable({ applicationId }) {
     .map(id => formFields.find(f => f.id === id))
     .filter(Boolean);
 
-  const filteredSubmissions = (() => {
-    const list = getFilteredSubmissions();
-    if (sortOrder === 'score_desc') return [...list].sort((a, b) => (b.evaluationProgress?.averageScore ?? -1) - (a.evaluationProgress?.averageScore ?? -1));
-    if (sortOrder === 'score_asc') return [...list].sort((a, b) => (a.evaluationProgress?.averageScore ?? -1) - (b.evaluationProgress?.averageScore ?? -1));
-    return list;
-  })();
+  const filteredSubmissions = getFilteredSubmissions();
 
   if (isLoading) {
     return <div className="text-center py-8">Loading submissions...</div>;

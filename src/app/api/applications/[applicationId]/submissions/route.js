@@ -27,6 +27,7 @@ export async function GET(request, { params }) {
     const currentStep = searchParams.get('currentStep')
     const page = parseInt(searchParams.get('page') || '1', 10)
     const limit = parseInt(searchParams.get('limit') || '50', 10)
+    const sort = searchParams.get('sort') || 'date' // 'date' | 'score_desc' | 'score_asc'
 
     // Verify application exists and user has access
     const application = await applicationService.findById(applicationId)
@@ -35,17 +36,19 @@ export async function GET(request, { params }) {
       return apiError('Application not found', 404)
     }
 
-    // Get submissions
-    const submissions = await applicationService.findSubmissionsByApplication(applicationId, {
-      status,
-      search,
-      currentStep,
-      page,
-      limit,
-    })
+    const scoreSorted = sort === 'score_desc' || sort === 'score_asc'
 
-    // Get total count for pagination
-    const totalCount = await applicationService.getSubmissionCount(applicationId, { status, search, currentStep })
+    // When sorting by score, fetch all rows (score is computed — can't ORDER BY in DB)
+    // then paginate in memory after sorting. For date sort, use DB pagination.
+    const [allSubmissions, totalCount] = await Promise.all([
+      applicationService.findSubmissionsByApplication(applicationId, {
+        status, search, currentStep,
+        page: scoreSorted ? 1 : page,
+        limit: scoreSorted ? 999999 : limit,
+        fetchAll: scoreSorted,
+      }),
+      applicationService.getSubmissionCount(applicationId, { status, search, currentStep })
+    ])
 
     // Batch fetch all static data in parallel
     const [evaluationSteps, app, uniqueJudges] = await Promise.all([
@@ -75,7 +78,7 @@ export async function GET(request, { params }) {
     const totalJudges = uniqueJudges.length || 1
 
     // Batch fetch all scores for all submissions in ONE query (eliminates N+1)
-    const submissionIds = submissions.map(s => s.id)
+    const submissionIds = allSubmissions.map(s => s.id)
     const stepIds = evaluationSteps.map(s => s.id)
 
     const allScores = stepIds.length > 0 && submissionIds.length > 0
@@ -94,7 +97,7 @@ export async function GET(request, { params }) {
     }
 
     // Compute aggregate in memory — no more per-submission DB calls
-    const enrichedSubmissions = submissions.map((submission) => {
+    const enrichedSubmissions = allSubmissions.map((submission) => {
       const stepNum = submission.currentStep || 1
       const step = evaluationSteps.find(s => s.stepNumber === stepNum)
 
@@ -137,10 +140,21 @@ export async function GET(request, { params }) {
       }
     })
 
+    // Sort + paginate in memory when score sort is active
+    if (sort === 'score_desc') {
+      enrichedSubmissions.sort((a, b) => (b.evaluationProgress?.averageScore ?? -1) - (a.evaluationProgress?.averageScore ?? -1))
+    } else if (sort === 'score_asc') {
+      enrichedSubmissions.sort((a, b) => (a.evaluationProgress?.averageScore ?? -1) - (b.evaluationProgress?.averageScore ?? -1))
+    }
+
+    const pagedSubmissions = scoreSorted
+      ? enrichedSubmissions.slice((page - 1) * limit, page * limit)
+      : enrichedSubmissions
+
     timer.log('GET', `/api/applications/${applicationId}/submissions`, 200)
 
     return apiResponse({
-      submissions: enrichedSubmissions,
+      submissions: pagedSubmissions,
       pagination: {
         page,
         limit,

@@ -342,7 +342,7 @@ export const applicationService = {
 
   async findSubmissionsByApplication(applicationId, options = {}) {
     try {
-      const { status, page = 1, limit = 10, includeReviewed = true, search, currentStep } = options
+      const { status, page = 1, limit = 10, includeReviewed = true, search, currentStep, fetchAll = false } = options
 
       // Build the where clause
       const whereClause = {
@@ -380,8 +380,7 @@ export const applicationService = {
           },
         },
         orderBy: { submittedAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
+        ...(!fetchAll && { skip: (page - 1) * limit, take: limit }),
       })
     } catch (error) {
       throw handleDatabaseError(error)
